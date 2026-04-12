@@ -1,6 +1,6 @@
 # --- 1. DATA PREPARATION ---
 setwd(".")
-data <- read.csv("data.csv")
+data <- read.csv("data.csv", stringsAsFactors = FALSE)
 
 # Inspect data structure and integrity
 str(data)
@@ -16,63 +16,70 @@ library(pacman)
 
 # Load required analysis and modeling packages
 p_load(tidyr, tidyverse, ggcorrplot, patchwork, caret, randomForest)
-library(tidyr)        # Tidies and reshapes data efficiently.
-library(tidyverse)    # Data manipulation & visualization suite (dplyr, ggplot2,...).
-library(ggcorrplot)   # Visualizes correlation matrices with heatmaps.
-library(patchwork)    # Combines ggplot2 plots into a single display.
-library(caret)        # Data preprocessing and model training
-library(randomForest) # Random forest algorithm implementation
 
 # --- 3. DATA PREPROCESSING ---
 # Encode categorical variables as numeric for modeling
+colnames(data) <- trimws(gsub("[^[:alnum:]_]", "", colnames(data)))
 temp_data <- data %>%
   mutate(infill_pattern = as.numeric(infill_pattern != "grid"),
-         material = as.numeric(material != "abs"))
-gathered_data <- gather(temp_data)
+         material = as.numeric(material != "abs")) %>%
+  mutate(across(everything(), as.numeric))
 # Verify transformation
 str(temp_data[c("infill_pattern", "material")])
-summary(temp_data)
+
 
 # --- 4. DATA VISUALIZATION ---
-gathered_data <- gathered_data %>%
-  mutate(key = factor(key, levels = unique(gathered_data$key)))
-
-# Distribution analysis (Histograms)
-ggplot(data = gathered_data, aes(x = value)) + 
-  geom_histogram() +
-  facet_wrap(~ key, scales = "free", nrow = 4) +
-  labs(title = "Feature Distributions", x = NULL, y = NULL)
-
 # Outlier detection (Box plots)
 gathered_data_filtered <- gathered_data %>%
-  filter(!key %in% c("infill_pattern", "material"))
+  filter(key != "infill_pattern" & key != "material")
 
-ggplot(data = gathered_data_filtered, aes(y = as.numeric(value))) +
+final_plot <- ggplot(data = gathered_data_filtered, aes(x = factor(1), y = as.numeric(value))) +
   stat_boxplot(geom = "errorbar", width = 0.2) +
-  geom_boxplot(outlier.shape = NA) +
-  geom_point(aes(x = -0.75), 
-    position = position_jitter(width = 0.25, height = 0)) +
-  facet_wrap(~ key, scales = "free", nrow = 2) +
-  labs(x = NULL, y = NULL) +
-  theme(axis.text.x = element_blank(),
-        axis.ticks.x = element_blank(),
-        plot.title = element_text(hjust = 0.5))
+  geom_boxplot(outlier.shape = NA, fill = "gold", width = 0.6) +
+  geom_point(aes(x = 0.6),
+             position = position_jitter(width = 0.1, height = 0),
+             color = "red", alpha = 0.5, size = 2) +
+    facet_wrap(~ key, scales = "free", nrow = 2) +
+  labs(title = "Summary of Statistical Box Plots for Parameters", x = NULL, y = NULL) 
+print(final_plot)
+
+# Distribution analysis (Histograms)
+gathered_data <- temp_data %>%
+  gather(key = "key", value = "value") %>%
+  mutate(key = factor(key, levels = unique(key)))
+
+p_hist_combined <- ggplot(data = gathered_data, aes(x = value)) +
+  geom_histogram(fill = "red", color = "black", bins = 15) +
+  facet_wrap(~ key, scales = "free", ncol = 4) +
+  labs(title = "Histograms", x = NULL, y = "Frequency")
+print(p_hist_combined)
 
 # Feature correlation matrix
-cor = round(cor(temp_data), 2)
+cor_matrix <- round(cor(temp_data), 2)
 
-ggcorrplot(cor,
-  method = "square", type = "upper", 
-  lab = TRUE, lab_size = 3.5,
-  title = "Correlation Matrix",
-  legend.title = "Pearson\nCorrelation\n")
+p_cor <- ggcorrplot(cor_matrix,
+        method = "square",# Hiện ô vuông giống báo cáo
+        type = "upper",   # Chỉ hiện nửa tam giác trên để không bị rối
+        lab = TRUE,       # Hiển thị các con số bên trong ô
+        lab_size = 3.5,   # Chỉnh cỡ chữ số nhỏ lại để không bị tràn ô
+        colors = c("purple", "white", "green"), # Thang màu từ tím (âm) sang xanh lá (dương)
+        title = "Pearson Correlation Matrix",
+        legend.title = "Pearson\nCorrelation\n") 
+print(p_cor)
 
 # Scatter plots for key mechanical properties
-p1 <- ggplot(temp_data, aes(x = layer_height, y = roughness, color = factor(material))) + geom_point(size = 3)
-p2 <- ggplot(temp_data, aes(x = fan_speed, y = tension_strenght, color = factor(material))) + geom_point(size = 3)
-p3 <- ggplot(temp_data, aes(x = infill_pattern, y = elongation, color = factor(material))) + 
-  xlim(-0.5, 1.5) + geom_point(size = 3)
-(p1 | p2) / p3
+# 1. Elongation vs Tension Strength 
+p_mech <- ggplot(temp_data, aes(x = elongation, y = tension_strenght, color = factor(material))) +
+  geom_point(size = 3, alpha = 0.8) 
+# 2. Bed Temperature vs Fan Speed
+p_bed_fan <- ggplot(temp_data, aes(x = bed_temperature, y = fan_speed)) +
+  geom_point(size = 3, color = "steelblue", alpha = 0.8) +
+ # 3. Material vs Nozzle Temperature
+p_mat_temp <- ggplot(temp_data, aes(x = factor(material, labels=c("ABS (0)", "PLA (1)")), y = nozzle_temperature, color = factor(material))) +
+  geom_jitter(width = 0.15, size = 3, alpha = 0.8) +
+# 4. Layer Height vs Roughness
+p_rough <- ggplot(temp_data, aes(x = layer_height, y = roughness, color = factor(material))) +
+  geom_point(size = 3, alpha = 0.8) 
 
 # --- 5. MODELING SETUP ---
 # Helper function to calculate NMAE and R-squared
